@@ -234,7 +234,9 @@ function _ingestDump1090Aircraft(info) {
 
 function isDump1090Running() {
     try {
-        execSync('pgrep -x dump1090-mutability', { stdio: 'ignore' });
+        // -f: match against full command line (process name is truncated to 15 chars on Linux,
+        //     "dump1090-mutability" is 19 chars so pgrep -x would never match)
+        execSync('pgrep -f dump1090-mutability', { stdio: 'ignore' });
         return true;
     } catch { return false; }
 }
