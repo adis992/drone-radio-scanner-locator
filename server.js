@@ -273,12 +273,28 @@ function startDump1090() {
 
 function stopDump1090() {
     return new Promise((resolve) => {
+        const finish = () => {
+            // Force-kill any surviving process and wait for USB to be released by kernel
+            try { execSync('pkill -9 -x dump1090-mutability 2>/dev/null || true', { stdio: 'ignore' }); } catch {}
+            setTimeout(() => {
+                // Verify it's really gone
+                const stillRunning = isDump1090Running();
+                if (stillRunning) {
+                    log('WARN', '[ADS-B] dump1090 still running after kill — forcing USB release...');
+                    try { execSync('pkill -9 -f dump1090', { stdio: 'ignore' }); } catch {}
+                    setTimeout(resolve, 1500);
+                } else {
+                    resolve();
+                }
+            }, 800);
+        };
         if (_dump1090Proc) {
-            _dump1090Proc.once('close', () => setTimeout(resolve, 400));
+            _dump1090Proc.once('close', finish);
             _dump1090Proc.kill('SIGTERM');
+            _dump1090Proc = null;
         } else if (isDump1090Running()) {
-            try { execSync('pkill -TERM dump1090-mutability'); } catch {}
-            setTimeout(resolve, 600);
+            try { execSync('pkill -TERM -x dump1090-mutability', { stdio: 'ignore' }); } catch {}
+            finish();
         } else {
             resolve();
         }
@@ -993,6 +1009,16 @@ function scanFrequencyOnce(freqData, scanId) {
         const hi = freqData.freq + freqData.bw;
         const step = Math.max(Math.round(freqData.bw / 50), 1000);
 
+        // Guard: if dump1090 is alive it holds USB exclusively — kill it before rtl_power
+        if (isDump1090Running() || _dump1090Proc) {
+            log('WARN', `[GEN] dump1090 alive before rtl_power scan — killing it now...`);
+            try { execSync('pkill -9 -f dump1090', { stdio: 'ignore' }); } catch {}
+            _dump1090Proc = null;
+            // Short delay for USB release
+            setTimeout(() => scanFrequencyOnce(freqData, scanId).then(resolve), 1200);
+            return;
+        }
+
         log('INFO', `[GEN] Scanning ${freqData.label} (${(freqData.freq/1e6).toFixed(3)} MHz)...`);
 
         const proc = spawn('rtl_power', [
@@ -1164,12 +1190,16 @@ function startDroneScanner(scanId) {
     const doStart = async () => {
         // dump1090 drži RTL USB uređaj ekskluzivno — mora se zaustaviti
         // prije nego rtl_power može dobiti pristup.
-        if (isDump1090Running()) {
-            log('WARN', '[DRONE] dump1090 drži RTL uređaj — privremeno zaustavljam ADS-B (usb_claim_interface -6 fix)...');
+        if (isDump1090Running() || _dump1090Proc) {
+            log('WARN', '[DRONE] dump1090 drži RTL uređaj — zaustavljam i čekam oslobođenje USB...');
             await stopDump1090();
-            // Daj OS-u 1.5s da oslobodi USB
-            await new Promise(r => setTimeout(r, 1500));
             log('INFO', '[DRONE] RTL uređaj oslobođen — počinjem drone scan...');
+        }
+        // Extra provjera — ako je OS još čuva USB, pričekaj
+        if (isDump1090Running()) {
+            log('WARN', '[DRONE] dump1090 i dalje živ! Čekam još 2s...');
+            try { execSync('pkill -9 -f dump1090', { stdio: 'ignore' }); } catch {}
+            await new Promise(r => setTimeout(r, 2000));
         }
         activeScanners.drone = true;
         broadcast({ type: 'scanner_status', scanner: 'drone', active: true });
