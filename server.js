@@ -243,13 +243,15 @@ function startDump1090() {
         '--net-bind-address', '127.0.0.1',
         '--net-ro-size', '500',
         '--net-ro-rate', '5',
-        '--gain', '-10',         // -10 = hardware AGC mode (FCI 2580 tuner ne podržava 44dB)
+        // FCI 2580 tuner: max gain = 0 dB (hardware limit).
+        // --gain -10 (AGC) also selects 0 dB on this chip — remove it.
+        // --aggressive not supported in dump1090-mutability package build.
+        // Best config for weak-signal reception on FCI 2580:
+        '--enable-agc',          // RTL2832U digital AGC (separate from tuner gain)
+        '--fix',                 // Single-bit CRC error correction — crucial for weak signals
         '--freq', '1090000000',
-        '--aggressive',          // Agresivniji dekoder — hvata slabije signale
-        '--enable-agc',          // Auto gain control
         '--write-json', 'captures/adsb',
         '--write-json-every', '1'
-        // --quiet uklonjeno da vidimo raw dump1090 output u terminalu
     ], { detached: false });
 
     _dump1090Proc.stdout.on('data', (d) => {
