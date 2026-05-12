@@ -544,6 +544,18 @@ function startADSBScanner(scanId) {
                         if (!ac.hex) return;
                         parseAircraftJSON(ac, scanId); // uvijek updateuj poziciju
                     });
+                    // Ukloni ADS-B uređaje koje dump1090 više ne prati
+                    const activeIcaos = new Set(data.aircraft.map(ac => ac.hex ? ac.hex.toUpperCase() : ''));
+                    for (const [id, device] of devices) {
+                        if (device.protocol === 'ADS-B' && device.icao && !activeIcaos.has(device.icao)) {
+                            const age = Date.now() - (device.lastSeen || 0);
+                            if (age > 15000) { // 15s grace period za SBS1 stream
+                                devices.delete(id);
+                                broadcast({ type: 'device_removed', deviceId: id, icao: device.icao });
+                                log('INFO', `[ADS-B] Izgubljen: ${device.icao} ${device.callsign || ''} (${Math.round(age/1000)}s bez signala)`);
+                            }
+                        }
+                    }
                 }
             }
         } catch (e) {
@@ -771,7 +783,8 @@ function parseAircraftJSON(ac, scanId) {
     if (ac.rssi) device.signalStrength = ac.rssi;
 
     device.timestamp = new Date().toISOString();
-    device.lastSeen = Date.now();
+    // ac.seen = sekunde od zadnje poruke (iz dump1090 aircraft.json)
+    device.lastSeen = (ac.seen != null) ? Date.now() - Math.round(ac.seen * 1000) : Date.now();
     
     // Calculate distance and bearing if we have coordinates
     if (device.latitude && device.longitude && baseLocation) {

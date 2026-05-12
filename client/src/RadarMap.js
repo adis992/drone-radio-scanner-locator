@@ -40,6 +40,16 @@ function makeIcon(color, symbol, size) {
 
 var ICONS = {
   aircraft:  makeIcon('#1565c0', '✈', 32),
+  // Avion čuven ali bez GPS pozicije — sivo, sa ? symbolom
+  aircraftNoPos: L.divIcon({
+    className: '',
+    html: '<div style="width:28px;height:28px;background:#546e7a;border:2px dashed #90caf9;border-radius:50%;display:flex;align-items:center;justify-content:center;' +
+      'color:#fff;font-size:11px;box-shadow:0 0 8px rgba(84,110,122,0.7);position:relative;opacity:0.9;">✈?</div>' +
+      '<div style="position:absolute;bottom:-14px;left:50%;transform:translateX(-50%);width:2px;height:12px;background:#546e7a;opacity:0.6"></div>',
+    iconSize: [28, 46],
+    iconAnchor: [14, 46],
+    popupAnchor: [0, -46],
+  }),
   drone:     makeIcon('#e65100', '⬡', 26),
   bluetooth: makeIcon('#7b1fa2', '⬡', 22),
   iot:       makeIcon('#00838f', '⬡', 22),
@@ -52,6 +62,20 @@ var ICONS = {
     iconAnchor: [10, 10],
   }),
 };
+
+// Pozicionira avion bez GPS na krug ~2km oko baze, ugao iz ICAO hash-a
+function getNoPositionCoords(icao, base) {
+  var hash = 0;
+  var s = (icao || '').toUpperCase();
+  for (var i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) & 0xFFFF;
+  var angle = (hash % 360) * Math.PI / 180;
+  var R = 0.018; // ~2km u stepenima latitude
+  var cosLat = Math.cos(base[0] * Math.PI / 180) || 1;
+  return [
+    base[0] + R * Math.cos(angle),
+    base[1] + R * Math.sin(angle) / cosLat,
+  ];
+}
 
 function getDeviceIcon(device) {
   if (device.type === 'aircraft/drone' && device.protocol === 'ADS-B') return ICONS.aircraft;
@@ -212,6 +236,15 @@ export default function RadarMap(props) {
     return devices.filter(function(d) { return getDeviceLat(d) != null && getDeviceLon(d) != null; });
   }, [devices]);
 
+  // ADS-B avioni čiji signal primamo ali bez GPS pozicije — prikazuju se na karti ~2km od baze
+  var noPositionAircraft = useMemo(function() {
+    return devices.filter(function(d) {
+      return d.type === 'aircraft/drone' && d.protocol === 'ADS-B' &&
+             d.latitude == null && d.longitude == null &&
+             d.estimatedLocation == null;
+    });
+  }, [devices]);
+
   useEffect(function() {
     mappableDevices.forEach(function(d) {
       var key = d.icao || d.id;
@@ -361,6 +394,40 @@ export default function RadarMap(props) {
             </React.Fragment>
           );
         })}
+
+        {/* Avioni bez GPS pozicije — prikazuju se ~2km od baze sa posebnom ikonom */}
+        {noPositionAircraft.map(function(device) {
+          var pos = getNoPositionCoords(device.icao, center);
+          var key = 'nopos-' + (device.icao || device.id);
+          return (
+            <Marker key={key} position={pos} icon={ICONS.aircraftNoPos}>
+              <Popup maxWidth={260}>
+                <div style={{ padding: '8px 10px', minWidth: 210, fontSize: '0.84em' }}>
+                  <div style={{ color: '#546e7a', fontWeight: 'bold', fontSize: '1em', marginBottom: 5 }}>
+                    ✈ {device.icao || '?'}{device.callsign && device.callsign.trim() ? ' — ' + device.callsign.trim() : ''}
+                  </div>
+                  <div style={{ color: '#e65100', fontWeight: 'bold', marginBottom: 6 }}>
+                    📡 Signal primljen — GPS pozicija nepoznata
+                  </div>
+                  {device.altitude != null && (
+                    <div><b style={{color:'#555'}}>Visina:</b> {device.altitude.toLocaleString()} ft ({Math.round(device.altitude * 0.3048).toLocaleString()} m)</div>
+                  )}
+                  {device.speed != null && <div><b style={{color:'#555'}}>Brzina:</b> {device.speed} kt</div>}
+                  {device.squawk && (
+                    <div style={{color:['7500','7600','7700'].includes(device.squawk)?'#d32f2f':'#333'}}>
+                      <b>Squawk:</b> {device.squawk}
+                      {device.squawk==='7700'?' ⚠️ EMERGENCY':device.squawk==='7500'?' ⚠️ HIJACK':''}
+                    </div>
+                  )}
+                  <div style={{ marginTop: 6, color: '#888', fontSize: '0.78em', borderTop: '1px solid #eee', paddingTop: 4 }}>
+                    Marker prikazan ~2km od baze — čekam MSG,3 (pozicija)<br/>
+                    Pozicija na mapi je aproksimativna.
+                  </div>
+                </div>
+              </Popup>
+            </Marker>
+          );
+        })}
       </MapContainer>
 
       {/* Legend */}
@@ -370,6 +437,7 @@ export default function RadarMap(props) {
         <Typography sx={{ color: '#0288d1', fontSize: '0.68rem', fontWeight: 'bold', mb: 0.5 }}>LEGENDA</Typography>
         {[
           { color: '#1565c0', label: '✈ Avion (ADS-B) do 200km' },
+          { color: '#546e7a', label: '✈? Čujem, nema GPS pozicije' },
           { color: '#e65100', label: '⬡ Dron / RC do 50km' },
           { color: '#7b1fa2', label: '⬡ Bluetooth <500m' },
           { color: '#00838f', label: '⬡ IoT uređaj do 20km' },
