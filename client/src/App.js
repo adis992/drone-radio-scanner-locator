@@ -133,38 +133,66 @@ function App() {
   
   const wsRef = useRef(null);
 
-  // WebSocket connection with auto-reconnect
+  // WebSocket connection with auto-reconnect + Page Visibility keepalive
   useEffect(() => {
     let ws;
     let reconnectTimer;
+    let mountedRef = true;
 
     const connect = () => {
+      if (!mountedRef) return;
       ws = new WebSocket(`ws://${window.location.hostname}:3001`);
 
       ws.onopen = () => {
-        console.log('WebSocket connected');
         wsRef.current = ws;
       };
 
       ws.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data);
+          // Respond to server ping with pong
+          if (data.type === 'ping') {
+            ws.send(JSON.stringify({ type: 'pong' }));
+            return;
+          }
           handleWebSocketMessage(data);
         } catch (e) {}
       };
+
+      // Native WS ping/pong (binary)
+      ws.addEventListener('message', (e) => {
+        if (e.data instanceof ArrayBuffer || e.data instanceof Blob) {
+          try { ws.send(new Uint8Array()); } catch (_) {}
+        }
+      });
 
       ws.onerror = () => {};
 
       ws.onclose = () => {
         wsRef.current = null;
-        reconnectTimer = setTimeout(connect, 3000);
+        if (mountedRef) {
+          reconnectTimer = setTimeout(connect, 2000);
+        }
       };
     };
 
     connect();
 
+    // When tab becomes visible again — reconnect immediately if disconnected
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+          clearTimeout(reconnectTimer);
+          connect();
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
     return () => {
+      mountedRef = false;
       clearTimeout(reconnectTimer);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
       if (ws) ws.close();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps

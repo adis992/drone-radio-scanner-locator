@@ -15,7 +15,9 @@
     "react-leaflet": "^4.2.1",
     "react-scripts": "5.0.1",
     "recharts": "^2.8.0",
-    "wavesurfer.js": "^7.3.2"
+    "wavesurfer.js": "^7.3.2",
+    "leaflet": "^1.9.4",
+    "react-leaflet": "^4.2.1"
   },
   "proxy": "http://localhost:3001",
   "scripts": {

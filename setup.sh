@@ -57,13 +57,12 @@ echo ""
 # Step 5: Install frontend dependencies
 echo -e "${YELLOW}Step 5: Installing frontend dependencies...${NC}"
 cd client
-npm install --no-optional
+npm install --legacy-peer-deps
 if [ $? -eq 0 ]; then
     echo -e "${GREEN}✓ Frontend dependencies installed${NC}"
 else
-    echo -e "${RED}✗ Frontend dependencies failed${NC}"
-    echo "Trying with --legacy-peer-deps..."
-    npm install --legacy-peer-deps --no-optional
+    echo -e "${RED}✗ Frontend install failed — retrying...${NC}"
+    npm install --legacy-peer-deps --force
 fi
 cd ..
 echo ""

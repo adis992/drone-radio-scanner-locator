@@ -282,30 +282,62 @@ function stopDump1090() {
     });
 }
 
+// ─────────────────────────────────────────────
+//  WEBSOCKET KEEPALIVE — prevents disconnect
+//  when browser tab is minimized/backgrounded.
+//  Server pings every 25s; drops dead connections.
+//  Scanners run independently — NEVER stopped on disconnect.
+// ─────────────────────────────────────────────
+const WS_PING_INTERVAL = 25000; // ms
+
+const _wsPingTimer = setInterval(() => {
+    wss.clients.forEach(ws => {
+        if (ws.isAlive === false) {
+            log('WARN', '[WS] Client did not pong — dropping dead connection');
+            return ws.terminate();
+        }
+        ws.isAlive = false;
+        try { ws.ping(); } catch (_) {}
+    });
+}, WS_PING_INTERVAL);
+
+wss.on('close', () => clearInterval(_wsPingTimer));
+
 // WebSocket connection handler
 wss.on('connection', (ws) => {
-    console.log('Client connected');
-    
+    ws.isAlive = true;
+    ws.on('pong', () => { ws.isAlive = true; }); // heartbeat response
+
+    log('INFO', '[WS] Client connected');
+
     // Send current scanner state to newly connected client (NO AUTO-START)
     ws.send(JSON.stringify({
         type: 'scanner_state_sync',
         scanners: activeScanners,
         devices: Array.from(devices.values())
     }));
-    
-    log('INFO', `[WS] Client connected. Current scanner states: IoT=${activeScanners.iot}, BT=${activeScanners.bluetooth}, General=${activeScanners.general}, ADSB=${activeScanners.adsb}`);
-    
+
+    log('INFO', `[WS] State synced: IoT=${activeScanners.iot}, BT=${activeScanners.bluetooth}, General=${activeScanners.general}, ADSB=${activeScanners.adsb}`);
+
     ws.on('message', (message) => {
         try {
             const data = JSON.parse(message);
+            // Client pong message (some browsers send text pong)
+            if (data.type === 'pong') { ws.isAlive = true; return; }
             handleWebSocketMessage(ws, data);
         } catch (error) {
-            console.error('WebSocket message error:', error);
+            log('ERROR', '[WS] Message parse error:', error.message);
         }
     });
 
     ws.on('close', () => {
-        console.log('Client disconnected');
+        log('INFO', '[WS] Client disconnected — scanners continue running');
+        // NOTE: Scanners are server-side processes — they keep running.
+        // Do NOT call stopAllScans() here.
+    });
+
+    ws.on('error', (err) => {
+        log('WARN', '[WS] Client error:', err.message);
     });
 });
 
