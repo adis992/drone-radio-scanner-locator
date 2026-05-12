@@ -83,7 +83,17 @@ let baseLocation = {
 // Lower = more sensitive (detects weaker signals, more false positives)
 // Higher = less sensitive (only strong signals, fewer false positives)
 // Recommended: 3-5 dB for normal use, 8-10 dB for noisy environments
-const SIGNAL_DETECTION_THRESHOLD = 4; // dB (reduced for better sensitivity)
+// Signal detection: delta (peak - avg within scan) must exceed this to count as signal.
+// Šum varira ±3-5 dB prirodno. 4 dB = uvijek detekcija šuma. 15 dB = samo pravi signali.
+const SIGNAL_DETECTION_THRESHOLD = 15; // dB spike above scan average
+
+// Absolute minimum — ništa ispod ovoga nije pravi signal (samo šum)
+// FCI 2580 šum floor je ~-35 do -28 dBm — pravi signali su iznad
+const SIGNAL_MIN_ABSOLUTE = -20; // dBm — ispod ovoga ignorišemo
+
+// Per-frequency noise baseline + potvrda — sprječava single-scan false pozitive
+// { noiseBaseline, samples[], confirmedCount, missCount, reported }
+const freqSignalHistory = new Map();
 
 // Track active scanners globally for state sync
 const activeScanners = {
@@ -1055,12 +1065,14 @@ function analyzeSpectrumData(data, freqData, scanId) {
 
     let bestMax = -Infinity;
     let bestAvg = 0;
+    let allValues = [];
 
     lines.forEach(line => {
         const parts = line.split(',');
         if (parts.length < 7) return;
         const values = parts.slice(6).map(v => parseFloat(v)).filter(v => !isNaN(v));
         if (values.length === 0) return;
+        allValues = allValues.concat(values);
         const maxPow = Math.max(...values);
         const avgPow = values.reduce((a, b) => a + b, 0) / values.length;
         if (maxPow > bestMax) { bestMax = maxPow; bestAvg = avgPow; }
@@ -1068,11 +1080,41 @@ function analyzeSpectrumData(data, freqData, scanId) {
 
     if (bestMax === -Infinity) return;
 
-    const delta = bestMax - bestAvg;
-    log('INFO', `[GEN] ${freqData.label} — max=${bestMax.toFixed(1)}dB avg=${bestAvg.toFixed(1)}dB delta=${delta.toFixed(1)}dB ${delta >= SIGNAL_DETECTION_THRESHOLD ? '✓ DETECTED' : '✗ below threshold'}`);
+    // ── NOISE BASELINE per frekvencija ──────────────────────────────────
+    // Pratimo rolling medijanu zadnjih 8 scaneva da znamo pravi šum za ovu frekv.
+    // To nam govori jesu li vrijednosti koje vidimo iznad normalnog šuma.
+    let hist = freqSignalHistory.get(freqData.freq);
+    if (!hist) {
+        hist = { samples: [], confirmedCount: 0, missCount: 0, reported: false, deviceId: null };
+        freqSignalHistory.set(freqData.freq, hist);
+    }
+    hist.samples.push(bestMax);
+    if (hist.samples.length > 8) hist.samples.shift();
+    const sorted = [...hist.samples].sort((a, b) => a - b);
+    // Medijana = noise baseline za ovu frekv. (robusna na outliere)
+    const noiseBaseline = sorted[Math.floor(sorted.length / 2)];
+    const aboveBaseline = bestMax - noiseBaseline; // koliko je iznad tipičnog šuma
+    const delta = bestMax - bestAvg;               // spike unutar ovog scana
 
-    if (delta >= SIGNAL_DETECTION_THRESHOLD) {
-        // Pronađi postojeći uređaj na ovoj frekvenciji — updateuj ga umjesto da pravimo duplikat
+    const isRealSignal = (
+        delta >= SIGNAL_DETECTION_THRESHOLD &&  // spike u scanu > 15 dB
+        aboveBaseline >= 8 &&                   // iznad noise baseline > 8 dB
+        bestMax > SIGNAL_MIN_ABSOLUTE           // apsolutni minimum (-20 dBm)
+    );
+
+    log('INFO', `[GEN] ${freqData.label} — max=${bestMax.toFixed(1)} avg=${bestAvg.toFixed(1)} delta=${delta.toFixed(1)}dB baseline=${noiseBaseline.toFixed(1)} above=${aboveBaseline.toFixed(1)}dB ${isRealSignal ? '✓ SIGNAL' : '✗ šum'}`);
+
+    if (isRealSignal) {
+        hist.confirmedCount++;
+        hist.missCount = 0;
+
+        // POTVRDA: signal mora biti vidljiv na ≥2 uzastopna scana (antispam)
+        if (hist.confirmedCount < 2) {
+            log('INFO', `[GEN] ${freqData.label} — čekam potvrdu (${hist.confirmedCount}/2)...`);
+            return;
+        }
+
+        // Pronađi postojeći uređaj na ovoj frekvenciji
         let existingDevice = null;
         for (const d of devices.values()) {
             if (d.type === 'rf_signal' && d.frequency === freqData.freq) {
@@ -1081,20 +1123,33 @@ function analyzeSpectrumData(data, freqData, scanId) {
             }
         }
 
-        const deviceId = existingDevice ? existingDevice.id : uuidv4();
+        const deviceId = existingDevice ? existingDevice.id : (hist.deviceId || uuidv4());
+        hist.deviceId = deviceId;
+
         const distanceResult = estimateDistanceFromSignal(bestMax, freqData.freq);
-        // Zadrži stari bearing ako postoji (ne skaće svaki scan)
-        const bearing = existingDevice ? existingDevice.bearing : estimateBearingFromFrequency(freqData.freq, deviceId);
+
+        // Bearing: bez DF antene bearing je nepoznat. Svaki update malo pomjerimo
+        // (±10° slučajno) da pokazuje da je procjena, ne da stoji na istom pixelu.
+        let bearing;
+        if (existingDevice && existingDevice.bearing != null) {
+            // Malo variramo — signal se 'kreće' jer ne znamo gdje je
+            bearing = (existingDevice.bearing + (Math.random() * 20 - 10) + 360) % 360;
+        } else {
+            bearing = Math.floor(Math.random() * 360);
+        }
+
         const deviceTypeInfo = getDeviceTypeDescription(freqData.label, freqData.freq);
-        const estimatedLocation = baseLocation && distanceResult.distanceMeters ? calculateEstimatedLocation(baseLocation, distanceResult.distanceMeters, bearing) : null;
-        
+        const estimatedLocation = baseLocation && distanceResult.distanceMeters
+            ? calculateEstimatedLocation(baseLocation, distanceResult.distanceMeters, bearing)
+            : null;
+
         const device = {
             ...(existingDevice || {}),
             id: deviceId, scanId,
             type: 'rf_signal',
             protocol: freqData.label,
             category: freqData.cat,
-            droneGroup: freqData.droneGroup || null,   // hobby / pro / fpv / longrange / military
+            droneGroup: freqData.droneGroup || null,
             frequency: freqData.freq,
             signalStrength: bestMax,
             bandwidth: freqData.bw,
@@ -1103,14 +1158,30 @@ function analyzeSpectrumData(data, freqData, scanId) {
             distanceMeters: distanceResult.distanceMeters,
             bearing: bearing,
             estimatedLocation: estimatedLocation,
-            locationNote: '⚠️ Approximate location - bearing unknown without DF antenna',
+            locationNote: '⚠️ Procjena smjera bez DF antene — bearing nije precizan',
             deviceTypeInfo: deviceTypeInfo,
             timestamp: new Date().toISOString()
         };
-        log('INFO', `[GEN] *** SIGNAL ${existingDevice ? 'UPDATE' : 'DETECTED'}: ${freqData.label} @ ${(freqData.freq/1e6).toFixed(3)}MHz signal=${bestMax.toFixed(1)}dB dist=${device.distance} bearing=${bearing}° ***`);
+        log('INFO', `[GEN] *** STVARNI SIGNAL ${existingDevice ? 'UPDATE' : 'NOVI'}: ${freqData.label} @ ${(freqData.freq/1e6).toFixed(3)}MHz signal=${bestMax.toFixed(1)}dB (${aboveBaseline.toFixed(1)}dB iznad šuma) dist=${device.distance} bearing=${bearing}° ***`);
         device.lastSeen = Date.now();
         devices.set(device.id, device);
         broadcast({ type: 'device_detected', device });
+    } else {
+        hist.missCount++;
+        hist.confirmedCount = 0;
+        // Ukloni uređaj ako ga nismo vidjeli 3 uzastopna scana
+        if (hist.missCount >= 3 && hist.deviceId) {
+            for (const [id, d] of devices.entries()) {
+                if (d.type === 'rf_signal' && d.frequency === freqData.freq) {
+                    devices.delete(id);
+                    broadcast({ type: 'device_removed', deviceId: id });
+                    log('INFO', `[GEN] Signal nestao: ${freqData.label} (${hist.missCount} uzastopnih promašaja)`);
+                    break;
+                }
+            }
+            hist.deviceId = null;
+            hist.missCount = 0;
+        }
     }
 }
 
@@ -1157,9 +1228,9 @@ const DRONE_FREQUENCIES = [
     { freq:  433920000, bw:  500000, label: 'Tactical UAV 433MHz',          cat: 'drone', droneGroup: 'military',  rtlOk: true  },
     { freq:  868000000, bw:  500000, label: 'Tactical UAV 868MHz',          cat: 'drone', droneGroup: 'military',  rtlOk: true  },
     { freq:  900000000, bw: 1000000, label: 'Tactical UAV 900MHz',          cat: 'drone', droneGroup: 'military',  rtlOk: true  },
-    { freq: 1090000000, bw:  500000, label: 'UAV Mode-S 1090MHz',           cat: 'drone', droneGroup: 'military',  rtlOk: true  },
+    // 1090 MHz = ADS-B frekvencija (dump1090 je tamo) — NE skeniramo s rtl_power!
+    // 1575 MHz = GPS L1 satelitski signal — SVUDA JE, nije spoofing!
     { freq: 1200000000, bw: 5000000, label: 'UAV L-band 1.2GHz',            cat: 'drone', droneGroup: 'military',  rtlOk: true  },
-    { freq: 1575420000, bw: 2000000, label: 'GPS L1 1575.42MHz (spoofing!)', cat: 'drone', droneGroup: 'military',  rtlOk: true  },
 ];
 
 // Deduplicirani spisak za skeniranje (jedan prolaz po frekvenciji)
