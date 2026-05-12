@@ -320,6 +320,11 @@ function App() {
           return [...prev, data.device];
         });
         break;
+      case 'device_removed':
+        setDevices(prev => prev.filter(d =>
+          d.id !== data.deviceId && !(d.icao && d.icao === data.icao)
+        ));
+        break;
       case 'devices_cleared':
         setDevices([]);
         break;

@@ -214,6 +214,7 @@ function _ingestDump1090Aircraft(info) {
     if (info.callsign) device.callsign = info.callsign;
     if (info.altitude) device.altitude = info.altitude;
     device.timestamp = new Date().toISOString();
+    device.lastSeen = Date.now();
     const isNew = !existing;
     devices.set(device.id, device);
     if (isNew) log('INFO', `[ADS-B] ★ Novi avion (stdout parser): ICAO=${info.icao} squawk=${info.squawk||'?'} callsign=${info.callsign||'?'}`);
@@ -688,6 +689,7 @@ function parseSBS1Line(line, scanId) {
     if (msgType === 6 && p[17] && p[17].trim()) device.squawk = p[17].trim();
 
     device.timestamp = new Date().toISOString();
+    device.lastSeen = Date.now();
     
     // Calculate distance and bearing if we have coordinates
     if (device.latitude && device.longitude && baseLocation) {
@@ -741,6 +743,7 @@ function parseAircraftJSON(ac, scanId) {
     if (ac.rssi) device.signalStrength = ac.rssi;
 
     device.timestamp = new Date().toISOString();
+    device.lastSeen = Date.now();
     
     // Calculate distance and bearing if we have coordinates
     if (device.latitude && device.longitude && baseLocation) {
@@ -863,6 +866,7 @@ function parseIoTData(json, scanId) {
     }
     
     log('INFO', `[IoT] *** DEVICE DETECTED: ${json.model||'Unknown'} @ ${(device.frequency/1e6).toFixed(3)}MHz RSSI=${json.rssi||'?'} distance=${device.distance||'?'} ***`);
+    device.lastSeen = Date.now();
     devices.set(device.id, device);
     broadcast({ type: 'device_detected', device });
 }
@@ -1070,6 +1074,7 @@ function analyzeSpectrumData(data, freqData, scanId) {
             timestamp: new Date().toISOString()
         };
         log('INFO', `[GEN] *** SIGNAL ${existingDevice ? 'UPDATE' : 'DETECTED'}: ${freqData.label} @ ${(freqData.freq/1e6).toFixed(3)}MHz signal=${bestMax.toFixed(1)}dB dist=${device.distance} bearing=${bearing}° ***`);
+        device.lastSeen = Date.now();
         devices.set(device.id, device);
         broadcast({ type: 'device_detected', device });
     }
@@ -1271,6 +1276,7 @@ function parseBluetoothData(data, scanId) {
             };
 
             log('INFO', `[BT] *** DEVICE FOUND: ${device.address} - ${device.name} ***`);
+            device.lastSeen = Date.now();
             devices.set(device.id, device);
             broadcast({ type: 'device_detected', device });
         }
@@ -2345,6 +2351,32 @@ if (!IS_DEV) {
 const PORT = process.env.PORT || 3001;
 
 // Bind na 0.0.0.0 — dostupno svim uređajima u LAN-u
+// ─────────────────────────────────────────────────────────────────────────────
+// Stale device cleanup — auto-removes devices that haven't sent a signal
+// within a type-appropriate timeout.  Broadcasts 'device_removed' to all
+// clients so the map can instantly remove the marker.
+// ─────────────────────────────────────────────────────────────────────────────
+const STALE_TIMEOUTS = {
+    'aircraft/drone':  60000,  // ADS-B aircraft: 60s (dump1090 may gap between frames)
+    'drone':           30000,  // RF drone signals
+    'iot_device':      60000,  // IoT 433/868 MHz sensors
+    'bluetooth':       30000,  // Bluetooth devices
+    'wifi':            60000,  // WiFi access points
+    'default':         60000,  // Everything else
+};
+setInterval(() => {
+    const now = Date.now();
+    for (const [id, device] of devices) {
+        const lastSeen = device.lastSeen || new Date(device.timestamp).getTime();
+        const timeout = STALE_TIMEOUTS[device.type] || STALE_TIMEOUTS.default;
+        if (now - lastSeen > timeout) {
+            devices.delete(id);
+            log('INFO', `[Cleanup] Device stale — removed: ${device.icao || device.name || id} (type=${device.type}, lastSeen=${Math.round((now-lastSeen)/1000)}s ago)`);
+            broadcast({ type: 'device_removed', deviceId: id, icao: device.icao });
+        }
+    }
+}, 15000); // check every 15 seconds
+
 server.listen(PORT, '0.0.0.0', () => {
     // Pronađi LAN IP adresu za prikaz
     const os = require('os');
