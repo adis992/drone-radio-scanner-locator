@@ -27,7 +27,12 @@ import {
   InputLabel,
   Tooltip,
   Switch,
-  FormControlLabel
+  FormControlLabel,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  TextField
 } from '@mui/material';
 import {
   PlayArrow,
@@ -132,6 +137,14 @@ function App() {
   const [locationPermission, setLocationPermission] = useState('prompt'); // 'granted', 'denied', 'prompt'
   
   const wsRef = useRef(null);
+  const [wsConnected, setWsConnected] = useState(false);
+  // Pending scanner command to send as soon as WS connects
+  const pendingScannerCmd = useRef(null);
+
+  // Manual location override dialog
+  const [locationDialogOpen, setLocationDialogOpen] = useState(false);
+  const [manualLat, setManualLat] = useState('');
+  const [manualLon, setManualLon] = useState('');
 
   // WebSocket connection with auto-reconnect + Page Visibility keepalive
   useEffect(() => {
@@ -145,6 +158,12 @@ function App() {
 
       ws.onopen = () => {
         wsRef.current = ws;
+        setWsConnected(true);
+        // Flush any command that was clicked before WS was ready
+        if (pendingScannerCmd.current) {
+          try { ws.send(JSON.stringify(pendingScannerCmd.current)); } catch (_) {}
+          pendingScannerCmd.current = null;
+        }
       };
 
       ws.onmessage = (event) => {
@@ -170,6 +189,7 @@ function App() {
 
       ws.onclose = () => {
         wsRef.current = null;
+        setWsConnected(false);
         if (mountedRef) {
           reconnectTimer = setTimeout(connect, 2000);
         }
@@ -206,7 +226,31 @@ function App() {
       lon: 18.5064763
     };
 
-    // Try to get actual geolocation, but use default as fallback
+    const applyLocation = (location, permission, source) => {
+      setBaseLocation(location);
+      setLocationPermission(permission);
+      localStorage.setItem('baseLocation', JSON.stringify(location));
+      console.log(`📍 Base location (${source}): ${location.lat.toFixed(6)}, ${location.lon.toFixed(6)}`);
+      fetch('/api/location/base', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(location)
+      }).catch(() => {});
+    };
+
+    // 1. Check localStorage — user may have manually set location before
+    const saved = localStorage.getItem('baseLocation');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (parsed.lat && parsed.lon) {
+          applyLocation(parsed, 'granted', 'localStorage');
+          return; // Don't request GPS if we have a saved location
+        }
+      } catch (_) {}
+    }
+
+    // 2. Try actual GPS
     if ('geolocation' in navigator) {
       navigator.geolocation.getCurrentPosition(
         (position) => {
@@ -214,33 +258,11 @@ function App() {
             lat: position.coords.latitude,
             lon: position.coords.longitude
           };
-          setBaseLocation(location);
-          setLocationPermission('granted');
-          
-          console.log(`📍 Using actual GPS location: ${location.lat.toFixed(6)}, ${location.lon.toFixed(6)}`);
-          
-          // Send to server
-          fetch('/api/location/base', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(location)
-          }).then(r => r.json())
-            .then(data => console.log('✓ Base location set on server:', data))
-            .catch(err => console.error('Failed to set base location:', err));
+          applyLocation(location, 'granted', 'GPS');
         },
         (error) => {
           console.warn('Geolocation denied or unavailable, using default location (WEB TEC Gradačac)');
-          setBaseLocation(defaultLocation);
-          setLocationPermission('denied');
-          
-          // Send default location to server
-          fetch('/api/location/base', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(defaultLocation)
-          }).then(r => r.json())
-            .then(data => console.log('✓ Default base location set:', data))
-            .catch(err => console.error('Failed to set base location:', err));
+          applyLocation(defaultLocation, 'denied', 'default');
         },
         {
           enableHighAccuracy: true,
@@ -249,19 +271,8 @@ function App() {
         }
       );
     } else {
-      // Browser doesn't support geolocation, use default
       console.warn('Geolocation not supported, using default location (WEB TEC Gradačac)');
-      setBaseLocation(defaultLocation);
-      setLocationPermission('denied');
-      
-      // Send default location to server
-      fetch('/api/location/base', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(defaultLocation)
-      }).then(r => r.json())
-        .then(data => console.log('✓ Default base location set:', data))
-        .catch(err => console.error('Failed to set base location:', err));
+      applyLocation(defaultLocation, 'denied', 'default');
     }
   }, []);
 
@@ -448,17 +459,43 @@ function App() {
   };
 
   const startScanner = (scannerType) => {
+    const msg = { type: `start_scan_${scannerType}` };
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: `start_scan_${scannerType}` }));
+      wsRef.current.send(JSON.stringify(msg));
+      setScannerStatus(prev => ({ ...prev, [scannerType]: true }));
+    } else {
+      // WS not ready — queue command, it will fire on next onopen
+      pendingScannerCmd.current = msg;
       setScannerStatus(prev => ({ ...prev, [scannerType]: true }));
     }
   };
 
   const stopScanner = (scannerType) => {
+    const msg = { type: `stop_scan_${scannerType}` };
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(JSON.stringify({ type: `stop_scan_${scannerType}` }));
+      wsRef.current.send(JSON.stringify(msg));
+      setScannerStatus(prev => ({ ...prev, [scannerType]: false }));
+    } else {
+      pendingScannerCmd.current = msg;
       setScannerStatus(prev => ({ ...prev, [scannerType]: false }));
     }
+  };
+
+  // Apply manual location override — saves to localStorage + sends to server
+  const applyManualLocation = () => {
+    const lat = parseFloat(manualLat.replace(',', '.'));
+    const lon = parseFloat(manualLon.replace(',', '.'));
+    if (isNaN(lat) || isNaN(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) return;
+    const location = { lat, lon };
+    setBaseLocation(location);
+    setLocationPermission('granted');
+    localStorage.setItem('baseLocation', JSON.stringify(location));
+    fetch('/api/location/base', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(location)
+    }).catch(() => {});
+    setLocationDialogOpen(false);
   };
 
   // Auto-detect FM mode based on frequency
@@ -733,10 +770,21 @@ function App() {
                   Real-time RF Spectrum Analyzer & Device Detector
                 </Typography>
                 {baseLocation && (
-                  <Typography variant="caption" sx={{ display: 'block', mt: 1, color: '#00d4ff' }}>
-                    📍 Base Location: {baseLocation.lat.toFixed(6)}, {baseLocation.lon.toFixed(6)} 
-                    {locationPermission === 'granted' ? ' (GPS)' : ' (Default: WEB TEC Gradačac)'}
-                  </Typography>
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 1 }}>
+                    <Typography variant="caption" sx={{ color: '#00d4ff' }}>
+                      📍 Base: {baseLocation.lat.toFixed(5)}, {baseLocation.lon.toFixed(5)}
+                      {locationPermission === 'granted' ? ' (GPS/saved)' : ' (default)'}
+                    </Typography>
+                    <Button size="small" startIcon={<GpsFixed />}
+                      onClick={() => {
+                        setManualLat(baseLocation.lat.toFixed(6));
+                        setManualLon(baseLocation.lon.toFixed(6));
+                        setLocationDialogOpen(true);
+                      }}
+                      sx={{ fontSize: '0.65rem', py: 0, minWidth: 0, color: '#ff9800', textTransform: 'none' }}>
+                      Ispravi lokaciju
+                    </Button>
+                  </Box>
                 )}
               </Grid>
               <Grid item>
@@ -2129,6 +2177,36 @@ function App() {
             )}
           </Box>
         </Drawer>
+
+        {/* ── LOCATION OVERRIDE DIALOG ───────────────────────────────── */}
+        <Dialog open={locationDialogOpen} onClose={() => setLocationDialogOpen(false)} maxWidth="xs" fullWidth>
+          <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <GpsFixed sx={{ color: '#00d4ff' }} />
+            Postavi Base Lokaciju
+          </DialogTitle>
+          <DialogContent>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              Unesi tačne koordinate tvoje lokacije. Ovo se čuva u browseru i koristi se svaki put. Možeš naći koordinate na Google Maps — desni klik → "What's here?"
+            </Typography>
+            <Box sx={{ display: 'flex', gap: 2 }}>
+              <TextField label="Latitude" value={manualLat} onChange={e => setManualLat(e.target.value)}
+                placeholder="44.8520" size="small" fullWidth
+                helperText="npr. 44.8520" />
+              <TextField label="Longitude" value={manualLon} onChange={e => setManualLon(e.target.value)}
+                placeholder="18.5064" size="small" fullWidth
+                helperText="npr. 18.5064" />
+            </Box>
+          </DialogContent>
+          <DialogActions>
+            <Button onClick={() => setLocationDialogOpen(false)}>Odustani</Button>
+            <Button variant="contained" startIcon={<GpsFixed />}
+              onClick={applyManualLocation}
+              disabled={!manualLat || !manualLon}>
+              Sačuvaj & Primijeni
+            </Button>
+          </DialogActions>
+        </Dialog>
+
       </Box>
     </ThemeProvider>
   );

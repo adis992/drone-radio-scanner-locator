@@ -977,15 +977,21 @@ function startGeneralScanner(scanId) {
     };
 
     const doStartGeneral = async () => {
-        // dump1090 drži RTL USB uređaj — zaustavi ga prije general scan
-        if (isDump1090Running()) {
-            log('WARN', '[GEN] dump1090 drži RTL uređaj — privremeno zaustavljam ADS-B...');
-            await stopDump1090();
-            await new Promise(r => setTimeout(r, 1500));
-            log('INFO', '[GEN] RTL uređaj oslobođen — počinjem general scan...');
-        }
+        // Postavi flag ODMAH — isti race condition fix kao za drone scanner
         activeScanners.general = true;
         broadcast({ type: 'scanner_status', scanner: 'general', active: true });
+
+        // dump1090 drži RTL USB uređaj — zaustavi ga prije general scan
+        if (isDump1090Running() || _dump1090Proc) {
+            log('WARN', '[GEN] dump1090 drži RTL uređaj — privremeno zaustavljam ADS-B...');
+            await stopDump1090();
+            log('INFO', '[GEN] RTL uređaj oslobođen — počinjem general scan...');
+        }
+        if (isDump1090Running()) {
+            log('WARN', '[GEN] dump1090 i dalje živ! Force kill + 1.5s...');
+            try { execSync('pkill -9 -f dump1090', { stdio: 'ignore' }); } catch {}
+            await new Promise(r => setTimeout(r, 1500));
+        }
         scanNext();
     };
 
@@ -1188,6 +1194,11 @@ function startDroneScanner(scanId) {
     };
 
     const doStart = async () => {
+        // Postavi flag ODMAH — sprječava ADS-B connect loop da restartuje dump1090
+        // dok mi asinkrono čekamo da se process ubije (race condition fix)
+        activeScanners.drone = true;
+        broadcast({ type: 'scanner_status', scanner: 'drone', active: true });
+
         // dump1090 drži RTL USB uređaj ekskluzivno — mora se zaustaviti
         // prije nego rtl_power može dobiti pristup.
         if (isDump1090Running() || _dump1090Proc) {
@@ -1195,14 +1206,12 @@ function startDroneScanner(scanId) {
             await stopDump1090();
             log('INFO', '[DRONE] RTL uređaj oslobođen — počinjem drone scan...');
         }
-        // Extra provjera — ako je OS još čuva USB, pričekaj
+        // Extra provjera — ako OS još drži USB
         if (isDump1090Running()) {
-            log('WARN', '[DRONE] dump1090 i dalje živ! Čekam još 2s...');
+            log('WARN', '[DRONE] dump1090 i dalje živ! Force kill + 2s...');
             try { execSync('pkill -9 -f dump1090', { stdio: 'ignore' }); } catch {}
             await new Promise(r => setTimeout(r, 2000));
         }
-        activeScanners.drone = true;
-        broadcast({ type: 'scanner_status', scanner: 'drone', active: true });
         log('INFO', '[DRONE] Dedicated drone scanner AKTIVAN — grupe: hobby/pro/FPV/long-range/military');
         log('INFO', `[DRONE] Skeniram ${DRONE_SCAN_FREQUENCIES.length} frekvencija: ${DRONE_SCAN_FREQUENCIES.map(f => (f.freq/1e6).toFixed(0)+'MHz').join(', ')}`);
         scanNext();
