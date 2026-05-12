@@ -1,0 +1,32 @@
+{
+  "name": "rtl-sdr-scanner",
+  "version": "1.0.0",
+  "description": "RTL-SDR Signal Scanner and Analyzer with real-time monitoring",
+  "main": "server.js",
+  "scripts": {
+    "install-deps": "npm run install-system-deps && npm install",
+    "install-system-deps": "chmod +x install-system.sh && ./install-system.sh",
+    "start": "node server.js",
+    "dev": "nodemon server.js",
+    "client": "cd client && npm start",
+    "build": "cd client && npm run build",
+    "dev-full": "concurrently \"npm run dev\" \"npm run client\""
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "ws": "^8.14.2",
+    "cors": "^2.8.5",
+    "body-parser": "^1.20.2",
+    "fft-js": "^0.0.12",
+    "wav": "^1.0.2",
+    "multer": "^1.4.5-lts.1",
+    "dotenv": "^16.3.1",
+    "axios": "^1.5.1",
+    "uuid": "^9.0.1",
+    "moment": "^2.29.4"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1",
+    "concurrently": "^8.2.1"
+  }
+}

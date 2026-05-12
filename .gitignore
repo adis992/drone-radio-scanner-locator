@@ -1,0 +1,44 @@
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Environment
+.env
+.env.local
+
+# Recordings
+recordings/*.wav
+recordings/*.mp3
+
+# Logs
+logs/*.log
+
+# Captures
+captures/*.iq
+captures/*.dat
+
+# Build
+client/build/
+dist/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Temporary
+tmp/
+temp/
+*.tmp
+
+# GitHub cloned repos (will be installed by script)
+dump1090/
+rtl_433/
+multimon-ng/
+kalibrate-rtl/

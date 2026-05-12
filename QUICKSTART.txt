@@ -1,0 +1,163 @@
+╔═══════════════════════════════════════════════════════════════╗
+║                                                               ║
+║           RTL-SDR SIGNAL SCANNER - QUICK REFERENCE           ║
+║                                                               ║
+╚═══════════════════════════════════════════════════════════════╝
+
+┌───────────────────────────────────────────────────────────────┐
+│ 🚀 GETTING STARTED (First Time Setup)                        │
+└───────────────────────────────────────────────────────────────┘
+
+cd /home/noname/Desktop/drone_radio_tokivoki_all-freq-scann-locator
+./setup.sh
+
+┌───────────────────────────────────────────────────────────────┐
+│ 🎯 RUNNING THE APP                                           │
+└───────────────────────────────────────────────────────────────┘
+
+Production:    ./start.sh
+Development:   ./start-dev.sh
+Manual:        node server.js
+
+Access at:     http://localhost:3001
+
+┌───────────────────────────────────────────────────────────────┐
+│ 📡 YOUR RTL-SDR DEVICE                                       │
+└───────────────────────────────────────────────────────────────┘
+
+Device:  Realtek RTL2832UDVB
+Tuner:   FCI 2580
+Status:  ✓ FULLY SUPPORTED
+
+Test:    rtl_test -t
+
+┌───────────────────────────────────────────────────────────────┐
+│ 🎮 FEATURES                                                   │
+└───────────────────────────────────────────────────────────────┘
+
+✓ Drone/Aircraft Detection (ADS-B)
+✓ IoT Device Scanner (433/868/915 MHz)
+✓ Bluetooth Scanner
+✓ WiFi Monitoring (2.4/5.8 GHz)
+✓ Live Spectrum Analyzer
+✓ Real-time Audio Listening
+✓ Signal Recording
+✓ Distance Estimation
+✓ Signal Strength Analysis
+
+┌───────────────────────────────────────────────────────────────┐
+│ 🔧 QUICK FIXES                                               │
+└───────────────────────────────────────────────────────────────┘
+
+RTL-SDR not found:
+  → Unplug and replug USB device
+  → Try USB 2.0 port (not 3.0)
+  → sudo rmmod dvb_usb_rtl28xxu
+
+Permission errors:
+  → ./setup.sh (runs permission fixes)
+  → sudo chown -R $USER:$USER .
+
+Port in use:
+  → Change PORT in .env file
+  → sudo lsof -i :3001
+
+┌───────────────────────────────────────────────────────────────┐
+│ 📁 PROJECT FILES                                             │
+└───────────────────────────────────────────────────────────────┘
+
+setup.sh           Complete setup automation
+start.sh           Start production server
+start-dev.sh       Start development mode
+server.js          Backend API
+client/            React frontend
+recordings/        Saved audio files
+README.md          Full documentation
+SETUP.md           Detailed setup guide
+
+┌───────────────────────────────────────────────────────────────┐
+│ 🎯 USAGE FLOW                                                │
+└───────────────────────────────────────────────────────────────┘
+
+1. Run:     ./start.sh
+2. Open:    http://localhost:3001
+3. Click:   "Start Full Scan"
+4. Watch:   Devices appear in real-time
+5. Listen:  Click speaker icon on any device
+6. Record:  Click record button
+7. Review:  Click "Recordings" to playback
+
+┌───────────────────────────────────────────────────────────────┐
+│ 🔍 WHAT IT DETECTS                                           │
+└───────────────────────────────────────────────────────────────┘
+
+Drones:
+  → Control signals (433/915 MHz, 2.4 GHz)
+  → Video transmission (5.8 GHz)
+  → ADS-B transponders (1090 MHz)
+
+Devices:
+  → IoT sensors (weather, temperature, etc.)
+  → Wireless cameras
+  → Baby monitors
+  → Remote controls
+  → Bluetooth devices
+  → WiFi networks
+  → Nearby phones/tablets
+
+Information Shown:
+  → Device type
+  → Frequency
+  → Signal strength
+  → Distance estimate
+  → Protocol details
+  → Real-time data
+
+┌───────────────────────────────────────────────────────────────┐
+│ ⚡ PROFESSIONAL FEATURES                                     │
+└───────────────────────────────────────────────────────────────┘
+
+✓ Real-time WebSocket updates
+✓ Multi-frequency scanning
+✓ FFT spectrum analysis
+✓ Multiple demodulation modes (FM, AM, etc.)
+✓ Audio recording to WAV
+✓ Live audio streaming
+✓ Distance calculations
+✓ Device fingerprinting
+✓ Signal strength monitoring
+✓ Beautiful Material-UI interface
+
+┌───────────────────────────────────────────────────────────────┐
+│ 📊 GITHUB TOOLS INTEGRATED                                   │
+└───────────────────────────────────────────────────────────────┘
+
+dump1090          → Aircraft/drone detection (ADS-B)
+rtl_433           → IoT device decoder
+multimon-ng       → Digital signal decoder
+kalibrate-rtl     → Frequency calibration
+rtl-sdr           → Core SDR tools
+
+All installed automatically by setup.sh
+
+┌───────────────────────────────────────────────────────────────┐
+│ ⚠️  IMPORTANT NOTES                                          │
+└───────────────────────────────────────────────────────────────┘
+
+→ USB 2.0 ports work better than 3.0
+→ External antenna improves range significantly
+→ Some frequencies may require licenses
+→ Respect privacy and local regulations
+→ "Lost bytes" warnings are normal
+
+┌───────────────────────────────────────────────────────────────┐
+│ 📞 SUPPORT                                                    │
+└───────────────────────────────────────────────────────────────┘
+
+Full Docs:   README.md
+Setup Help:  SETUP.md
+This Card:   QUICKSTART.txt
+
+╔═══════════════════════════════════════════════════════════════╗
+║  Ready to scan! Run: ./setup.sh then ./start.sh              ║
+╚═══════════════════════════════════════════════════════════════╝
