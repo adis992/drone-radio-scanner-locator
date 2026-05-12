@@ -71,6 +71,7 @@ import {
 } from 'recharts';
 import axios from 'axios';
 import moment from 'moment';
+import RadarMap from './RadarMap';
 import './App.css';
 
 const darkTheme = createTheme({
@@ -109,8 +110,6 @@ function App() {
   const [filter, setFilter] = useState('all');
   const [selectedDevice, setSelectedDevice] = useState(null);
   const [autoPairBt, setAutoPairBt] = useState(true);
-  const [radiusFilter, setRadiusFilter] = useState(false); // default OFF — filtriraj samo kad eksplicitno uključiš
-  const MAX_RADIUS_M = 500000; // 500 km — pokriva cijeli domet RTL-SDR antene
   const [wifiDevices, setWifiDevices] = useState([]);
   const [drawerOpen, setDrawerOpen] = useState(false);
   
@@ -679,12 +678,6 @@ function App() {
       const group = filter.replace('drone_group_', '');
       if (device.droneGroup !== group) return false;
     } else if (filter !== 'all' && device.type !== filter) return false;
-    // Radius filter NE važi za avione (ADS-B) i drone RF signale — oni su uvijek daleko
-    const isAircraftOrDrone = device.type === 'aircraft/drone' || device.category === 'drone';
-    if (radiusFilter && !isAircraftOrDrone) {
-      const distM = getDeviceDistanceM(device);
-      if (distM !== null && distM > MAX_RADIUS_M) return false;
-    }
     return true;
   });
 
@@ -1015,24 +1008,7 @@ function App() {
                   </Typography>
                 }
               />
-              <Tooltip title={`Prikazuj samo uređaje unutar ${MAX_RADIUS_M}m od serverske lokacije`}>
-                <FormControlLabel
-                  control={
-                    <Switch
-                      checked={radiusFilter}
-                      onChange={(e) => setRadiusFilter(e.target.checked)}
-                      color="warning"
-                      size="small"
-                    />
-                  }
-                  label={
-                    <Typography variant="body2" sx={{ color: radiusFilter ? '#ffa726' : 'text.secondary', fontWeight: radiusFilter ? 'bold' : 'normal' }}>
-                      <MyLocation sx={{ fontSize: 14, mr: 0.5, verticalAlign: 'middle' }} />
-                      Radius {MAX_RADIUS_M}m
-                    </Typography>
-                  }
-                />
-              </Tooltip>
+
               <Box sx={{ flexGrow: 1 }} />
               <Button
                 variant="outlined"
@@ -1041,6 +1017,28 @@ function App() {
               >
                 Recordings ({recordings.length})
               </Button>
+            </Box>
+          </Paper>
+
+          {/* ── RADAR MAP ────────────────────────────────────────────────── */}
+          <Paper sx={{ p: 0, mb: 3, background: '#0a1628', border: '2px solid #00d4ff33', borderRadius: 2, overflow: 'hidden' }}>
+            <Box sx={{ p: 1.5, background: 'linear-gradient(90deg, #0d1b2a 0%, #1b3a5c 100%)', display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Radar sx={{ color: '#00d4ff', fontSize: 22 }} />
+              <Typography variant="h6" sx={{ color: '#00d4ff', fontWeight: 'bold', fontSize: '1rem' }}>
+                RADAR — Mapa u realnom vremenu
+              </Typography>
+              {baseLocation && (
+                <Typography variant="caption" sx={{ color: '#aaa', ml: 1 }}>
+                  Base: {baseLocation.lat.toFixed(5)}, {baseLocation.lon.toFixed(5)}
+                </Typography>
+              )}
+            </Box>
+            <Box sx={{ height: 560 }}>
+              <RadarMap
+                devices={devices}
+                baseLocation={baseLocation}
+                scannerStatus={scannerStatus}
+              />
             </Box>
           </Paper>
 
