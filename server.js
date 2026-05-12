@@ -540,22 +540,13 @@ function startADSBScanner(scanId) {
             if (fs.existsSync(jsonPath)) {
                 const data = JSON.parse(fs.readFileSync(jsonPath, 'utf8'));
                 if (data.aircraft && Array.isArray(data.aircraft)) {
+                    // Ažuriraj pozicije aviona koji imaju CPR-dekodirane koordinate u JSON-u
+                    // Napomena: FCI 2580 tuner rijetko dekodira CPR pozicije — avioni dolaze
+                    // uglavnom samo kroz SBS1 stream. Brisanje se vrši kroz stale timeout (60s).
                     data.aircraft.forEach(ac => {
                         if (!ac.hex) return;
-                        parseAircraftJSON(ac, scanId); // uvijek updateuj poziciju
+                        parseAircraftJSON(ac, scanId);
                     });
-                    // Ukloni ADS-B uređaje koje dump1090 više ne prati
-                    const activeIcaos = new Set(data.aircraft.map(ac => ac.hex ? ac.hex.toUpperCase() : ''));
-                    for (const [id, device] of devices) {
-                        if (device.protocol === 'ADS-B' && device.icao && !activeIcaos.has(device.icao)) {
-                            const age = Date.now() - (device.lastSeen || 0);
-                            if (age > 15000) { // 15s grace period za SBS1 stream
-                                devices.delete(id);
-                                broadcast({ type: 'device_removed', deviceId: id, icao: device.icao });
-                                log('INFO', `[ADS-B] Izgubljen: ${device.icao} ${device.callsign || ''} (${Math.round(age/1000)}s bez signala)`);
-                            }
-                        }
-                    }
                 }
             }
         } catch (e) {
@@ -2482,7 +2473,7 @@ const PORT = process.env.PORT || 3001;
 // clients so the map can instantly remove the marker.
 // ─────────────────────────────────────────────────────────────────────────────
 const STALE_TIMEOUTS = {
-    'aircraft/drone':  60000,  // ADS-B aircraft: 60s (dump1090 may gap between frames)
+    'aircraft/drone':  90000,  // ADS-B aircraft: 90s (slabi signal, ~1 msg/30s)
     'drone':           30000,  // RF drone signals
     'iot_device':      60000,  // IoT 433/868 MHz sensors
     'bluetooth':       30000,  // Bluetooth devices
